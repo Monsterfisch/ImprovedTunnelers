@@ -1201,6 +1201,7 @@ def scenario(extreme):
     def whole_tile():
         """The step does one neighbour a call; run it until the tile is done."""
         r = h.u32(f.spread_radius)
+        h.put32(f.control + 0x2CC, r)                        # STEP_RADIUS, as the tick sets it
         h.put32(f.control + 0x258, -r & 0xFFFFFFFF)          # STEP_DX
         h.put32(f.control + 0x25C, -r & 0xFFFFFFFF)          # STEP_DY
         h.put32(f.control + 0x200, 1)                        # STEP_ACTIVE
@@ -1211,11 +1212,14 @@ def scenario(extreme):
         raise AssertionError('the step never finished its tile')
 
     fall_in()
-    check('the ground goes back to the height the map gives it',
-          h.m.read(f.live_height + stile, 1)[0], 8)
-    check('  and so does the ground around it',
+    # The ground is no longer put back here: the game's own cleanup brush restores the
+    # whole tunnel footprint when the tunnel is filled, before this queue runs (that
+    # brush is executed in bench/test_native_terrain.py). This step only shakes.
+    check('the step leaves the ground to the native cleanup',
+          h.m.read(f.live_height + stile, 1)[0], 12)
+    check('  around it as well',
           [h.m.read(f.live_height + 99 * 400 + 201, 1)[0],
-           h.m.read(f.live_height + 101 * 400 + 199, 1)[0]], [8, 8])
+           h.m.read(f.live_height + 101 * 400 + 199, 1)[0]], [12, 12])
     check('  while a cliff is left alone', h.m.read(f.live_height + 99 * 400 + 199, 1)[0], 20)
     check('a workshop within reach is shaken', len(hits), 1)
     check('  for the set amount', hits[0][1][3], h.u32(f.spread_damage))
@@ -1252,8 +1256,8 @@ def scenario(extreme):
     h.put8(f.live_height + wall_tile, 12)
     h.put8(f.base_height + wall_tile, 8)
     fall_in()
-    check('  while bare ground beside them is put back',
-          h.m.read(f.live_height + wall_tile, 1)[0], 8)
+    check('  and bare ground beside them too',
+          h.m.read(f.live_height + wall_tile, 1)[0], 12)
 
     print('  and what the shaking leaves standing')
     h.put16(f.building_tiles + 2 * workshop_tile, 0)
@@ -1294,7 +1298,7 @@ def scenario(extreme):
     hits.clear()
     h.put32(f.step_flags, 1 | (5 << 8))                     # a quiet fill
     whole_tile()
-    check('a quiet fill puts the ground back', h.m.read(f.live_height + stile, 1)[0], 8)
+    check('a quiet fill leaves the ground to the cleanup too', h.m.read(f.live_height + stile, 1)[0], 12)
     check('  and damages nothing', len(hits), 0)
 
     print(' and the tick that works through it')
@@ -1319,8 +1323,10 @@ def scenario(extreme):
     h.run(tick, until=tick_on)
     check('and then it stops at nothing left', h.u32(f.queue_count), 0)
 
-    # A tick stops between two calls of the game's damage once its time is spent, and the
-    # next one carries on with the same tile where it left off.
+    # A tick stops between two calls of the game's damage once it has made as many as the
+    # speed setting allows, however long each of them takes, and the next one carries on
+    # with the same tile where it left off. Counting calls instead of CPU time makes every
+    # machine - and a replay - do the same work each tick.
     h.put32(f.spread_radius, 2)
     h.put32(f.spread_damage, 60)
     shaken = []
@@ -1339,10 +1345,11 @@ def scenario(extreme):
     h.put32(f.queue_count, 1)
     h.put32(f.control + 0x200, 0)
     h.run(tick, until=tick_on)
-    check('a tick whose time is spent stops after one call of the damage', len(shaken), 1)
+    check('a tick stops after as many calls of the damage as the speed allows',
+          len(shaken), h.u32(f.speed))
     check('  with the tile still part way through', h.u32(f.control + 0x200), 1)
     h.run(tick, until=tick_on)
-    check('  and the next tick carries on with it', len(shaken), 2)
+    check('  and the next tick carries on with it', len(shaken), 2 * h.u32(f.speed))
     h.stub(f.process_damage, 0, 32, record=shaken)
     h.cpu.clock_offset = 0
     for _ in range(40):

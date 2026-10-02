@@ -92,7 +92,8 @@ local AOB_TOOLBAR_CLICK = "53 33 DB 39 1D ? ? ? ? 0F 85 ? ? ? ? 39 1D ? ? ? ? 0F
 
 -- updateUnits, where it decides whether a unit is due to look around for enemies this
 -- tick. The game tick counter is the third operand there.
-local AOB_TICK_COUNTER = "8B 87 50 0A 00 00 8B 8F 98 09 00 00"
+local AOB_TICK_COUNTER =
+  "8B 87 50 0A 00 00 8B 8F 98 09 00 00 8B 15 ? ? ? ? 23 C8 23 D0 3B D1"
 local OFFSET_TICK_COUNTER = 14
 
 -- Offsets inside UpdateTunneler. The function is byte for byte the same in both
@@ -163,6 +164,8 @@ local TUNNELER_GUARDS = {
 -- on it, and then tells the path layer the tile has changed.
 local DAMAGE_WALK_LIVE_HEIGHT_OPERAND = 0x5B  -- cmp byte [esi + live height map], 0x10
 local DAMAGE_WALK_BASE_HEIGHT_OPERAND = 0x64  -- ... and the height the map itself gives it
+local TERRAIN = { brushCall = 0x75, zeroHeight = 0x7A, heightHook = 0x51, pathUpdate = 0x79,
+  nextTile = 0x89, walkHook = 0x41, cleanupBranch = 0x6B }
 local DAMAGE_WALK_PATH_STATE_OPERAND = 0xA5   -- mov ecx, PathFindingState
 local DAMAGE_WALK_DAMAGE_CALL = 0x9B          -- call processDamageToBuilding
 local DAMAGE_WALK_DAMAGE_CALL_SIZE = 5
@@ -173,6 +176,13 @@ local DAMAGE_WALK_X_DELTAS_OPERAND = 0xD7
 local DAMAGE_WALK_Y_DELTAS_OPERAND = 0xE1
 local DAMAGE_WALK_DIRECTIONS_OPERAND = 0xE8
 local DAMAGE_WALK_GUARDS = {
+  [TERRAIN.walkHook] = { 0xF7, 0x04, 0xB5 },
+  [0x48] = { 0x81, 0x00, 0x00, 0x20, 0x75, 0x64 },
+  [0x6B] = { 0x6A, 0xFE, 0x57, 0x55, 0x56, 0xB9 },
+  [TERRAIN.brushCall] = { 0xE8 },
+  [TERRAIN.zeroHeight] = { 0xC6, 0x86 },
+  [0x80] = { 0x00, 0xEB, 0x1D },
+  [0xA0] = { 0x57, 0x55, 0x6A, 0x01, 0xB9 },
   [DAMAGE_WALK_LIVE_HEIGHT_OPERAND - 2] = { 0x80, 0xBE },
   [DAMAGE_WALK_BASE_HEIGHT_OPERAND - 2] = { 0x80, 0xBE },
   [DAMAGE_WALK_PATH_STATE_OPERAND - 1] = { 0xB9 },
@@ -182,6 +192,25 @@ local DAMAGE_WALK_GUARDS = {
   [DAMAGE_WALK_X_DELTAS_OPERAND - 3] = { 0x03, 0x2C, 0xC5 },
   [DAMAGE_WALK_Y_DELTAS_OPERAND - 3] = { 0x03, 0x3C, 0xC5 },
   [DAMAGE_WALK_DIRECTIONS_OPERAND - 3] = { 0x03, 0x34, 0x95 },
+}
+
+-- Native nine-tile brush, reached through the verified collapse caller. Member
+-- offsets are identical in the supported SHC and Extreme layouts, not addresses.
+TERRAIN.guards = {
+  [0x00] = { 0x53, 0x8B, 0x5C, 0x24, 0x10, 0x55, 0x8B, 0x6C, 0x24, 0x0C, 0x56, 0x57, 0x8B, 0xF1 },
+  [0x1D] = { 0x6A, 0x00, 0x8B, 0xCE, 0xE8 },
+  [0x26] = { 0x8B, 0x44, 0x24, 0x14, 0x8B, 0x8C, 0x86, 0x60, 0x51, 0x16, 0x00 },
+  [0x31] = { 0xF7, 0xC1, 0x00, 0x05, 0x00, 0x10, 0x75, 0x50 },
+  [0x39] = { 0x66, 0x83, 0xBC, 0x46, 0xB0, 0x29, 0x20, 0x00, 0x00, 0x75, 0x45 },
+  [0x44] = { 0xF6, 0xC1, 0xB1, 0x75, 0x40, 0xF7, 0xC1, 0x00, 0x00, 0x30, 0x60, 0x75, 0x38 },
+  [TERRAIN.heightHook] = { 0x8A, 0x8C, 0x30, 0x30, 0xFA, 0x29, 0x00, 0x80, 0xF9, 0x10 },
+  [0x5D] = { 0x80, 0xBC, 0x30, 0x40, 0x34, 0x2B, 0x00, 0x10 },
+  [TERRAIN.pathUpdate] = { 0x50, 0x8B, 0x44, 0x24, 0x20, 0x50, 0xB9 },
+  [0x84] = { 0xE8 },
+  [TERRAIN.nextTile] = { 0x83, 0xC7, 0x01, 0x83, 0xFF, 0x09, 0x0F, 0x8C },
+  [0x95] = { 0x8B, 0x4C, 0x24, 0x1C, 0x8B, 0x54, 0x24, 0x18, 0x51, 0x52, 0x6A, 0x05, 0xB9 },
+  [0xA6] = { 0xE8 },
+  [0xAB] = { 0x5F, 0x5E, 0x5D, 0x5B, 0xC2, 0x10, 0x00 },
 }
 
 -- Offsets inside processDamageToBuilding, the game's own damage, where it sorts the tile
@@ -244,10 +273,13 @@ local AIM_GUARDS = {
   [0x12] = { 0x66, 0x3D, 0x6F, 0x00 },
 }
 
--- Where the game looks up a player's keep, which is the module's idea of where that
--- player's castle is. The pattern sits in two functions that do the same thing and both
--- read the same table, so either match gives the right address.
-local AOB_KEEP_OF_PLAYER = "66 83 B8 ? ? ? ? 02 74 ? 69 ED F4 39 00 00 8B AD ? ? ? ?"
+-- The player's keep lookup, including the following troop-role case to distinguish
+-- it from the otherwise identical lookup in the second native function.
+local AOB_KEEP_OF_PLAYER =
+  "66 83 B8 ? ? ? ? 02 74 ? 69 ED F4 39 00 00 8B AD ? ? ? ? "
+  .. "85 ED 75 ? 5F 5D 33 C0 5B 59 C2 0C 00 8B C5 69 C0 2C 03 00 00 "
+  .. "0F BF 88 ? ? ? ? 89 8B 28 E0 18 00 0F BF 90 ? ? ? ? "
+  .. "5F 5D 89 93 2C E0 18 00 B8 01 00 00 00 5B 59 C2 0C 00 83 FA 06"
 local AOB_CAMPGROUND_OF_PLAYER = "8B 44 24 04 69 C0 F4 39 00 00 8B 80 ? ? ? ? 85 C0 7F"
 local CAMP_IDS_OPERAND = 0x0C
 local CAMP_GUARDS = {
@@ -279,7 +311,6 @@ local MESSAGE_GUARDS = {
 -- without it the denial simply keeps the game's own "enemy units are too close" refusal.
 local MESSAGE_GROUP = 0x4D
 local MESSAGE_ENTRY = 250
-local MESSAGE_TEXT = "The ground is too unstable to build here right now"
 
 -- Offsets inside isEnemyTooCloseUnk. The hook sits after the coordinates have been
 -- checked, so the zone test never runs on coordinates the game would have thrown out.
@@ -434,7 +465,6 @@ ROUTE.stepSeconds = 2                         -- how long a half-done retarget i
 ROUTE.refused = 8                             -- targets set aside at a time
 ROUTE.size = ROUTE.pathOffset + ROUTE.pathMax * 4
 -- Where traceAndCommitPathPlan finds no way back and goes on to rebuild the whole map.
-ROUTE.drainBudget = 2500                      -- collapse work a tick may take (x1024 cycles)
 ROUTE.stopwatchFloor = 90000                  -- a tick this long (x1024 cycles, ~25 ms) is worth a line
 ROUTE.travelHook = 0x7E0                      -- je: not at its destination yet
 ROUTE.raids = {
@@ -620,7 +650,7 @@ C.SW_DAMAGE_MAX = 0x1F4           -- ... the dearest single call of the game's d
 C.SW_DAMAGE_CALLS = 0x1F8         -- ... how many calls of it
 C.SW_DAMAGE_KIND = 0x1FC          -- ... what the dearest hit: a building type, -1 a wall
 C.STEP_ACTIVE = 0x200             -- a tunnel tile is part way through falling in
-C.DRAIN_START = 0x204             -- when this tick's collapse work began (cycles / 1024)
+C.DAMAGE_LEFT = 0x204             -- deterministic damage-call allowance for this tick
 C.FILL_UNIT = 0x22C               -- the tunnel being written into the queue
 C.FILL_FLAGS = 0x230
 C.FILL_TILE = 0x234
@@ -650,6 +680,7 @@ C.STEP_DAMAGE = 0x2A8             -- what this one tile is taking
 C.FAMILY_DAMAGE = 0x2C4           -- the damage running now is this module's, so stairs
                                   -- and crenellations take it too
 C.FAMILY_READY = 0x2C8            -- ... and the widening that lets them is in
+C.STEP_RADIUS = 0x2CC             -- the spread radius the tile being taken apart began with
 C.QUEUE = 0x2E8
 C.ZONES = C.QUEUE + QUEUE_MAX * 16
 C.RECORDS = C.ZONES + ZONE_COUNT * ZONE_SIZE
@@ -666,7 +697,8 @@ C.SIZE = C.ROUTES + (PLAYER_COUNT + 1) * 4 * ROUTE.size
 -- The GUI hands enable() only what it has saved, never the defaults in options.yml, so a
 -- module nobody has opened in the GUI gets an empty table. These are the real defaults.
 local DEFAULTS = {
-  denial = { enabled = true, seconds = 120, message = true },
+  denial = { enabled = true, sliderValue = 4800, message = true },
+  terrain = { enabled = true },
   retarget = { enabled = true, range = DEFAULT_SEARCH_RANGE, max = 10 },
   targets = { towers_and_gates = true, under_buildings = true },
   collapse = { damage = 2500, spread = true, spread_damage = 60, spread_radius = 2,
@@ -729,7 +761,7 @@ local writeInteger = core.writeInteger
 ---@return number|nil
 local function scanOptional(pattern, purpose)
   local found, address = pcall(core.AOBScan, pattern)
-  if not found or address == nil then
+  if not found or type(address) ~= "number" or address <= 0 then
     log(WARNING, "improved-tunnelers: could not find " .. purpose
       .. "; the part of the module that needs it is off. Another module has probably "
       .. "patched the same code.")
@@ -788,9 +820,7 @@ end
 ---@param destination number
 ---@param size number how many bytes the jump replaces, at least 5
 local function writeJump(address, destination, size)
-  local relative = (destination - (address + 5)) & 0xFFFFFFFF
-  local bytes = { 0xE9, relative & 0xFF, (relative >> 8) & 0xFF, (relative >> 16) & 0xFF,
-    (relative >> 24) & 0xFF }
+  local bytes = { 0xE9, table.unpack(core.itob(core.getRelativeAddress(address, destination, -5))) }
   for _ = 6, size do
     bytes[#bytes + 1] = 0x90
   end
@@ -826,10 +856,18 @@ return {
 
   enable = function(self, config)
     config = config or {}
+    self.stateSupport = require('state').prepare()
 
     local denialOn = setting(config, "denial", "enabled") and true or false
-    local denialSeconds = toInteger(setting(config, "denial", "seconds"),
-      DEFAULTS.denial.seconds)
+    local denialTicks = toInteger(setting(config, "denial", "sliderValue"),
+      DEFAULTS.denial.sliderValue)
+    -- Keep existing profiles' explicit duration/disabled choice when upgrading
+    -- from the old seconds control. New profiles use the standard tick slider.
+    if config.denial and config.denial.sliderValue == nil and config.denial.seconds ~= nil then
+      denialTicks = toInteger(config.denial.seconds, 0) * TICKS_PER_SECOND
+    end
+    denialTicks = math.max(1, math.min(12000, denialTicks))
+    local terrainOn = setting(config, "terrain", "enabled") and true or false
     local messageOn = setting(config, "denial", "message") and true or false
     local retargetOn = setting(config, "retarget", "enabled") and true or false
     local retargetRange = toInteger(setting(config, "retarget", "range"),
@@ -852,6 +890,8 @@ return {
     local uiOn = setting(config, "ui", "enabled") and true or false
     local stancesOn = setting(config, "stances", "enabled") and true or false
     local raidsOn = setting(config, "raids", "enabled") and true or false
+    assert(spreadRadius >= 0 and spreadRadius <= 8 and collapseSpeed >= 1 and collapseSpeed <= 100,
+      "Improved Tunnelers: collapse radius/speed must be within the customization ranges")
 
     ---------------------------------------------------------------------------------
     -- Find the game code
@@ -899,7 +939,7 @@ return {
     local records = control + C.RECORDS
 
     writeInteger(control + C.DENIAL_ENABLED, denialOn and 1 or 0)
-    writeInteger(control + C.DENIAL_DURATION, denialSeconds * TICKS_PER_SECOND)
+    writeInteger(control + C.DENIAL_DURATION, denialTicks)
     writeInteger(control + C.RETARGET_ENABLED, retargetOn and 1 or 0)
     writeInteger(control + C.RETARGET_RANGE, retargetRange)
     writeInteger(control + C.RETARGET_MAX, retargetMax)
@@ -957,7 +997,7 @@ return {
     -- will take it and a denial is laid, nothing standing on it means the target has gone
     -- and the tunneler is sent back to the game's own search.
 
-    local denialReady, retargetReady, messageReady = false, false, false
+    local denialReady, retargetReady = false, false
     local collapseReady, familyReady = false, false
     local teamSite = scanOptional(AOB_PLAYER_TEAMS, "the player team table")
     local enemySite = scanOptional(AOB_ENEMY_TOO_CLOSE, "the build denial check")
@@ -990,21 +1030,14 @@ return {
       end
     end
 
-    -- Which camp the tunnels should be working towards. Only the nearest enemy is wanted,
-    -- so a player on our own team is passed over; with no team table to read, a table of
-    -- nothing but zeroes reads as "nobody is allied with anybody".
+    -- Which camp the tunnels should be working towards. Without the native team
+    -- table, leave camp targeting unavailable instead of inventing alliance data.
     local anchor
     local teamTable
     if teamSite ~= nil then
       teamTable = readAddress(teamSite + OFFSET_PLAYER_TEAMS)
     end
-    if teamTable == nil then
-      teamTable = core.allocate((PLAYER_COUNT + 1) * 4, true)
-      for player = 0, PLAYER_COUNT do
-        writeInteger(teamTable + 4 * player, 0)
-      end
-    end
-    if unitBase ~= nil and (campIds ~= nil or keepIds ~= nil) then
+    if teamTable ~= nil and unitBase ~= nil and (campIds ~= nil or keepIds ~= nil) then
       anchor = core.allocateAssembly(templates.find_anchor, {
         ANCHOR_ID_ADDRESS = control + C.ANCHOR_ID,
         CAMP_BUILDING_ADDRESS = control + C.CAMP_BUILDING,
@@ -1048,11 +1081,53 @@ return {
     if tunneler ~= nil and ticks ~= nil and search ~= nil then
       local walk = callTarget(tunneler + TUNNELER_TUNNEL_DAMAGE_CALL)
       local tickSite = scanOptional(AOB_UPDATE_UNITS, "the game's pass over its units")
-      if guardsHold(walk, DAMAGE_WALK_GUARDS, "the tunnel collapse")
+      local walkReady = guardsHold(walk, DAMAGE_WALK_GUARDS, "the tunnel collapse")
+      local brush = walkReady and callTarget(walk + TERRAIN.brushCall) or nil
+      local brushReady = brush ~= nil and guardsHold(brush, TERRAIN.guards, "the tunnel terrain brush")
+      if brushReady then
+        local nativeMap = readAddress(walk + DAMAGE_WALK_TILE_MAP_OPERAND)
+        brushReady = readAddress(walk + 0x71) == nativeMap
+          and readAddress(walk + TERRAIN.walkHook + 3) == tileFlags
+          and readAddress(walk + DAMAGE_WALK_LIVE_HEIGHT_OPERAND) == nativeMap + 0x29FA30
+          and readAddress(walk + DAMAGE_WALK_BASE_HEIGHT_OPERAND) == nativeMap + 0x2B3440
+          and readAddress(walk + TERRAIN.zeroHeight + 2) == nativeMap + 0x29FA30
+          and readAddress(brush + 0x80) == readAddress(walk + DAMAGE_WALK_PATH_STATE_OPERAND)
+          and readAddress(brush + 0xA2) == readAddress(walk + DAMAGE_WALK_PATH_STATE_OPERAND)
+          and callTarget(brush + 0xA6) == callTarget(walk + DAMAGE_WALK_UPDATE_CALL)
+        if not brushReady then
+          log(WARNING, "improved-tunnelers: tunnel terrain brush data does not match its native caller; collapse changes are off.")
+        end
+      end
+      if walkReady
+          and brushReady
           and tickSite ~= nil and guardsHold(tickSite, TICK_GUARDS, "the game's pass over its units")
           and rowTable ~= nil then
         local tileMapState = readAddress(walk + DAMAGE_WALK_TILE_MAP_OPERAND)
         local processDamage = callTarget(walk + DAMAGE_WALK_DAMAGE_CALL)
+
+        if terrainOn then
+          local restore = core.allocateAssembly(templates.restore_tunnel_height, {
+            WALL_FAMILY = WALL_FAMILY_FLAGS,
+            RETURN_ADDRESS = brush + TERRAIN.heightHook + 7,
+            UPDATE_ADDRESS = brush + TERRAIN.pathUpdate,
+            SKIP_ADDRESS = brush + TERRAIN.nextTile,
+          })
+          remember(brush + TERRAIN.heightHook, 7)
+          writeJump(brush + TERRAIN.heightHook, restore, 7)
+          -- The native cleanup walk is also called on tunneler death. Restore
+          -- each brush footprint before its center is sorted for damage, since
+          -- digging can raise neighbours even when the center has a building.
+          local restorePath = core.allocateAssembly(templates.restore_tunnel_path_tile, {
+            TILE_FLAGS_ADDRESS = tileFlags,
+            TILE_MAP_STATE_ADDRESS = tileMapState,
+            TERRAIN_BRUSH_ADDRESS = brush,
+            RETURN_ADDRESS = walk + TERRAIN.walkHook + 11,
+          })
+          remember(walk + TERRAIN.walkHook, 11)
+          writeJump(walk + TERRAIN.walkHook, restorePath, 11)
+          remember(walk + TERRAIN.cleanupBranch, 22)
+          writeJump(walk + TERRAIN.cleanupBranch, walk + 0xA0, 22)
+        end
 
         -- Stairs and crenellations are sorted out of the game's own damage before it does
         -- anything; widening that one test hands them to the wall loop instead, which
@@ -1071,7 +1146,7 @@ return {
           familyReady = true
         end
         local queue = control + C.QUEUE
-        -- Writing a tunnel into the queue, one tile of it at a time.
+        -- Restore native terrain before releasing the tunnel path; queue only damage.
         local fill = core.allocateAssembly(templates.queue_fill, {
           FILL_UNIT_ADDRESS = control + C.FILL_UNIT,
           FILL_FLAGS_ADDRESS = control + C.FILL_FLAGS,
@@ -1083,6 +1158,13 @@ return {
           QUEUE_ADDRESS = queue,
           QUEUE_COUNT_ADDRESS = control + C.QUEUE_COUNT,
           QUEUE_MAX = QUEUE_MAX,
+          TERRAIN_FIX = terrainOn and 1 or 0,
+          TILE_FLAGS_ADDRESS = tileFlags,
+          BUILDING_TILE_ADDRESS = buildingTiles,
+          LIVE_HEIGHT_ADDRESS = readAddress(walk + DAMAGE_WALK_LIVE_HEIGHT_OPERAND),
+          BASE_HEIGHT_ADDRESS = readAddress(walk + DAMAGE_WALK_BASE_HEIGHT_OPERAND),
+          TILE_MAP_STATE_ADDRESS = tileMapState,
+          TERRAIN_BRUSH_ADDRESS = brush,
           DIRECTIONS_ADDRESS = readAddress(walk + DAMAGE_WALK_DIRECTIONS_OPERAND),
           X_DELTAS_ADDRESS = readAddress(walk + DAMAGE_WALK_X_DELTAS_OPERAND),
           Y_DELTAS_ADDRESS = readAddress(walk + DAMAGE_WALK_Y_DELTAS_OPERAND),
@@ -1093,7 +1175,7 @@ return {
           UNIT_PREVIOUS_TILE = (unitBase + UNIT_PREVIOUS_TILE) & 0xFFFFFFFF,
         })
 
-        -- One tile of it: the ground goes back, and what stands about is shaken.
+        -- One tile of deferred building damage. Terrain no longer depends on this queue.
         local step = core.allocateAssembly(templates.queue_step, {
           WALL_FAMILY = WALL_FAMILY_FLAGS,
           STOCKPILE = ROUTE.stockpileFlag,
@@ -1103,7 +1185,7 @@ return {
           STEP_DAMAGE_ADDRESS = control + C.STEP_DAMAGE,
           BUILDING_STRIDE = SEARCH_STRIDE,
           BUILDING_TYPE_ADDRESS = (buildingBase + BUILDING_TYPE) & 0xFFFFFFFF,
-          RADIUS_ADDRESS = control + C.SPREAD_RADIUS,
+          STEP_RADIUS_ADDRESS = control + C.STEP_RADIUS,
           STEP_X_ADDRESS = control + C.STEP_X,
           STEP_Y_ADDRESS = control + C.STEP_Y,
           STEP_FLAGS_ADDRESS = control + C.STEP_FLAGS,
@@ -1115,8 +1197,6 @@ return {
           SPREAD_DAMAGE_ADDRESS = control + C.SPREAD_DAMAGE,
           ROW_TABLE_ADDRESS = rowTable,
           MAP_LIMIT = MAP_LIMIT,
-          LIVE_HEIGHT_ADDRESS = readAddress(walk + DAMAGE_WALK_LIVE_HEIGHT_OPERAND),
-          BASE_HEIGHT_ADDRESS = readAddress(walk + DAMAGE_WALK_BASE_HEIGHT_OPERAND),
           TILE_FLAGS_ADDRESS = tileFlags,
           BUILDING_TILE_ADDRESS = buildingTiles,
           TILE_MAP_STATE_ADDRESS = tileMapState,
@@ -1142,9 +1222,9 @@ return {
           SW_DAMAGE_CALLS_ADDRESS = control + C.SW_DAMAGE_CALLS,
           SW_DAMAGE_KIND_ADDRESS = control + C.SW_DAMAGE_KIND,
           STEP_ACTIVE_ADDRESS = control + C.STEP_ACTIVE,
-          DRAIN_START_ADDRESS = control + C.DRAIN_START,
-          DRAIN_BUDGET = ROUTE.drainBudget,
+          DAMAGE_LEFT_ADDRESS = control + C.DAMAGE_LEFT,
           RADIUS_ADDRESS = control + C.SPREAD_RADIUS,
+          STEP_RADIUS_ADDRESS = control + C.STEP_RADIUS,
           STEP_DX_ADDRESS = control + C.STEP_DX,
           STEP_DY_ADDRESS = control + C.STEP_DY,
           STEP_THIS_TILE_ADDRESS = control + C.STEP_THIS_TILE,
@@ -1280,7 +1360,7 @@ return {
       -- that looks the way it should, no route is ever laid out and a line whose target is
       -- down falls back on the search towards the campfire.
       local routeBuild, followRoute
-      local routesOk = rowTable ~= nil and anchor ~= nil
+      local routesOk = walkReady and rowTable ~= nil and anchor ~= nil
         and guardsHold(search, ROUTE.guards, "the search's own maps")
       if routesOk then
         local routeWalk = core.allocateAssembly(templates.route_walk, {
@@ -1666,33 +1746,45 @@ return {
       -- through textResourceModifier; if that module is not there, or says no, the message
       -- is left exactly as the game writes it.
       if denialReady and messageOn then
-        local texts = modules ~= nil and modules.textResourceModifier or nil
-        local wrote = false
-        if texts ~= nil and texts.SetText ~= nil then
-          wrote = pcall(function() texts:SetText(MESSAGE_GROUP, MESSAGE_ENTRY, MESSAGE_TEXT) end)
-          if not wrote then
-            log(WARNING, "improved-tunnelers: the game's text could not be changed, so a "
-              .. "denial keeps the game's own refusal message.")
+        -- cr.tex and its encoding are available at the framework's afterInit.
+        -- Do not install a message hook pointing at an absent/rejected string.
+        local attempted = false
+        hooks.registerHookCallback("afterInit", function()
+          if attempted or self.control ~= control then return end
+          attempted = true
+          local texts = modules ~= nil and modules.textResourceModifier or nil
+          local wrote = false
+          if texts ~= nil and texts.SetText ~= nil and texts.GetLanguage ~= nil then
+            local ok, accepted = pcall(function()
+              local language = texts:GetLanguage()
+              local text = type(language) == "string" and require("messages")[language:lower()]
+              return text ~= nil and texts:SetText(MESSAGE_GROUP, MESSAGE_ENTRY, text)
+            end)
+            wrote = ok and accepted == true
+            if not wrote then
+              log(WARNING, "improved-tunnelers: the game's text could not be changed, so a "
+                .. "denial keeps the game's own refusal message.")
+            end
+          else
+            log(INFO, "improved-tunnelers: no textResourceModifier, so a denial keeps the "
+              .. "game's own refusal message.")
           end
-        else
-          log(INFO, "improved-tunnelers: no textResourceModifier, so a denial keeps the "
-            .. "game's own refusal message.")
-        end
-        local messageSite = wrote and scanOptional(AOB_PLACEMENT_MESSAGE,
-          "the placement refusal message") or nil
-        if messageSite ~= nil and guardsHold(messageSite, MESSAGE_GUARDS,
-            "the placement refusal message") then
-          local message = core.allocateAssembly(templates.placement_message, {
-            MINE_ADDRESS = control + C.MINE,
-            MINE_TICK_ADDRESS = control + C.MINE_TICK,
-            TICKS_ADDRESS = ticks,
-            MESSAGE_ENTRY = MESSAGE_ENTRY,
-            RETURN_ADDRESS = messageSite + MESSAGE_HOOK + MESSAGE_HOOK_SIZE,
-          })
-          remember(messageSite + MESSAGE_HOOK, MESSAGE_HOOK_SIZE)
-          writeJump(messageSite + MESSAGE_HOOK, message, MESSAGE_HOOK_SIZE)
-          messageReady = true
-        end
+          local messageSite = wrote and scanOptional(AOB_PLACEMENT_MESSAGE,
+            "the placement refusal message") or nil
+          if messageSite ~= nil and guardsHold(messageSite, MESSAGE_GUARDS,
+              "the placement refusal message") then
+            local message = core.allocateAssembly(templates.placement_message, {
+              MINE_ADDRESS = control + C.MINE,
+              MINE_TICK_ADDRESS = control + C.MINE_TICK,
+              TICKS_ADDRESS = ticks,
+              MESSAGE_ENTRY = MESSAGE_ENTRY,
+              RETURN_ADDRESS = messageSite + MESSAGE_HOOK + MESSAGE_HOOK_SIZE,
+            })
+            remember(messageSite + MESSAGE_HOOK, MESSAGE_HOOK_SIZE)
+            writeJump(messageSite + MESSAGE_HOOK, message, MESSAGE_HOOK_SIZE)
+            log(INFO, "improved-tunnelers: localized placement refusal enabled.")
+          end
+        end)
       end
     end
 
@@ -1765,7 +1857,7 @@ return {
     local render = scanOptional(AOB_RENDER_UNIT_BUTTONS, "the unit command buttons")
     local click = scanOptional(AOB_UNIT_BUTTON_CLICK, "the unit command button clicks")
     local toolbar = scanOptional(AOB_TOOLBAR_CLICK, "the toolbar button handler")
-    if render ~= nil and click ~= nil and toolbar ~= nil
+    if uiOn and render ~= nil and click ~= nil and toolbar ~= nil
         and guardsHold(render, RENDER_GUARDS, "the unit command buttons")
         and guardsHold(click, { [CLICK_TUNNELER_BRANCH] = CLICK_GUARD },
           "the unit command button clicks")
@@ -1907,13 +1999,25 @@ return {
 
     ---------------------------------------------------------------------------------
 
+    require('state').attach(self, C, {
+      queue = QUEUE_MAX, zones = ZONE_COUNT, records = RECORD_COUNT,
+      lines = (PLAYER_COUNT + 1) * 4, refused = ROUTE.refused,
+      routeSize = ROUTE.size, entries = ROUTE.entries,
+      pathMax = ROUTE.pathMax, pathOffset = ROUTE.pathOffset,
+    }, table.concat({
+      tostring(denialReady), tostring(retargetReady), tostring(targetsReady),
+      tostring(collapseReady), tostring(familyReady), tostring(aimReady),
+      tostring(stanceReady), tostring(raidsReady), tostring(anchor ~= nil),
+      tostring(campIds ~= nil),
+    }, '/'))
+
     log(INFO, string.format(
       "improved-tunnelers: build denial %s%s, tunnels %s, targets %s, collapse %s, "
       .. "buttons %s, tunnelers %s, stances %s, AI raid tunnellers %s.",
-      denialReady and (denialOn and string.format("on, %d s", denialSeconds) or "off")
+      denialReady and (denialOn and string.format("on, %d ticks", denialTicks) or "off")
         or "unavailable",
       (denialReady and denialOn and messageOn)
-        and (messageReady and ", with its own refusal message" or ", with the game's message")
+        and ", localized refusal pending game-text initialization"
         or "",
       retargetReady and (retargetOn and string.format(
         "gather on lines and are sent on %s up to %d times, reaching %d tiles",
@@ -1954,6 +2058,7 @@ return {
       core.writeCodeBytes(patched[index].address, patched[index].bytes)
     end
     self.patched = {}
+    self.control = nil
   end,
 
 }

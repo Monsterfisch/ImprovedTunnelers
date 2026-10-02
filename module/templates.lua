@@ -26,10 +26,8 @@
 -- the game itself uses to decide whether a unit is an enemy, so a zone never gets in the
 -- way of its owner or its owner's allies.
 --
--- Loading a save or starting a new game moves the tick counter backwards; when that
--- Loading a save or starting a new game moves the tick counter backwards; when that
--- happens the whole list is dropped rather than left to expire against a clock that no
--- longer applies.
+-- Map Extensions restores the zones and their last observed tick together. The backward
+-- tick check remains a defensive guard, not a substitute for restoring saved state.
 local denial_check = [[
 push ebx
 push ebp
@@ -2191,11 +2189,43 @@ jmp RETURN_ADDRESS
 -- tunnel apart a few tiles at a time instead, starting at the target and running back to
 -- the entrance.
 --
--- The first walks a tunneler's path plan and writes each tile into a queue: where it is,
--- and who is bringing it down. Nothing else happens here, so a collapse costs no more than
--- a few dozen writes.
+-- The first walks the native path before its owner releases it. Restore bare ground and
+-- its native walk layer immediately: an optional damage queue must never be the only
+-- owner of terrain repair when a save is used as a map without this module. Walls and
+-- buildings keep their native height/hit points. Expensive damage remains queued.
 -- The plan it walks is the whole tunnel from its entrance, however many times the tunnel was
 -- sent on along the way - extend_plan keeps it so.
+-- Correct only the native -2 cleanup mode. The native brush still chooses tiles,
+-- excludes unsuitable terrain/buildings and updates path linkages/walkability.
+-- Positive digging executes the displaced instruction and original code unchanged.
+local restore_tunnel_height = [[
+cmp dword [esp+0x20], -2
+jne restore_original
+test ecx, WALL_FAMILY
+jnz SKIP_ADDRESS
+mov cl, byte [eax+esi+0x2B3440]
+mov byte [eax+esi+0x29FA30], cl
+jmp UPDATE_ADDRESS
+restore_original:
+mov cl, byte [eax+esi+0x29FA30]
+jmp RETURN_ADDRESS
+]]
+
+-- Run terrain cleanup for every path position, including a center under a
+-- building. Preserve the unit-state receiver for the native path advance.
+local restore_tunnel_path_tile = [[
+push ecx
+push -2
+push edi
+push ebp
+push esi
+mov ecx, TILE_MAP_STATE_ADDRESS
+call TERRAIN_BRUSH_ADDRESS
+pop ecx
+test dword [esi*4+TILE_FLAGS_ADDRESS], 0x20000081
+jmp RETURN_ADDRESS
+]]
+
 local queue_fill = [[
 mov eax, [FILL_UNIT_ADDRESS]
 imul eax, eax, 1168
@@ -2211,9 +2241,32 @@ movsx ecx, word [eax+UNIT_LADDER_Y]
 mov [FILL_Y_ADDRESS], ecx
 mov dword [FILL_STEP_ADDRESS], 0
 fill_loop:
+mov ecx, [FILL_TILE_ADDRESS]
+if TERRAIN_FIX = 0
+test dword [ecx*4+TILE_FLAGS_ADDRESS], 0x20000081
+jnz fill_ground_done
+cmp word [ecx*2+BUILDING_TILE_ADDRESS], 0
+jne fill_ground_done
+cmp byte [ecx+LIVE_HEIGHT_ADDRESS], 16
+jb fill_ground
+cmp byte [ecx+BASE_HEIGHT_ADDRESS], 16
+jae fill_ground_done
+end if
+fill_ground:
+push -2
+push dword [FILL_Y_ADDRESS]
+push dword [FILL_X_ADDRESS]
+push ecx
+mov ecx, TILE_MAP_STATE_ADDRESS
+call TERRAIN_BRUSH_ADDRESS
+if TERRAIN_FIX = 0
+  mov ecx, [FILL_TILE_ADDRESS]
+  mov byte [ecx+LIVE_HEIGHT_ADDRESS], 0
+end if
+fill_ground_done:
 mov ecx, [QUEUE_COUNT_ADDRESS]
 cmp ecx, QUEUE_MAX
-jae fill_done
+jae fill_advance
 shl ecx, 4
 add ecx, QUEUE_ADDRESS
 mov edx, [FILL_TILE_ADDRESS]
@@ -2225,6 +2278,7 @@ mov [ecx+8], edx
 mov edx, [FILL_FLAGS_ADDRESS]
 mov [ecx+12], edx
 add dword [QUEUE_COUNT_ADDRESS], 1
+fill_advance:
 mov eax, [FILL_UNIT_ADDRESS]
 imul eax, eax, 1168
 mov ecx, [FILL_STEP_ADDRESS]
@@ -2275,21 +2329,20 @@ ret
 -- nothing stands; a wall or a building on the tile is left entirely to the game, which
 -- resets the height itself the moment the thing is destroyed.
 --
--- One tile of that queue: the ground it and its neighbours stand on goes back to the height
--- the map itself says they should be - the game keeps that in a second map, which is what
--- its own "put this tile back" does, and it is why a tunnel over raised ground must never
--- simply be flattened to nothing. Then, unless this is a tunnel being quietly filled in
--- behind a tunneler that is still digging, whatever stands within reach is shaken.
+-- Terrain repair now belongs to queue_fill, before the native path is released. This
+-- queue only shakes buildings; it never writes terrain. The native brush handles
+-- the tunnel footprint at completion. Quiet fills do no damage.
 --
--- One neighbour per call, at STEP_DX / STEP_DY, which it then moves on; when the last one
--- is done STEP_ACTIVE goes to 0. The game's damage is the dear part of a collapse on a real
--- map - a building it brings down sets the game rebuilding its maps - so queue_tick has to
--- be able to stop between any two of them. EAX comes back 1 when the game's damage was
+-- One neighbour per call, at STEP_DX / STEP_DY within STEP_RADIUS, which it then moves
+-- on; when the last one is done STEP_ACTIVE goes to 0. The game's damage is the dear part
+-- of a collapse on a real map - a building it brings down sets the game rebuilding its
+-- maps - so queue_tick has to be able to stop between any two of them. EAX comes back 1
+-- when the game's damage was
 -- called, else 0. EBX is kept.
 local queue_step = [[
 push ebx
 xor ebx, ebx
-cmp dword [RADIUS_ADDRESS], 0
+cmp dword [STEP_RADIUS_ADDRESS], 0
 jl step_finished
 mov edx, [STEP_Y_ADDRESS]
 add edx, [STEP_DY_ADDRESS]
@@ -2310,15 +2363,6 @@ add ecx, eax
 mov [STEP_THIS_X_ADDRESS], eax
 mov [STEP_THIS_Y_ADDRESS], edx
 mov [STEP_THIS_TILE_ADDRESS], ecx
-test dword [ecx*4+TILE_FLAGS_ADDRESS], WALL_FAMILY
-jnz step_ground_done
-cmp word [ecx*2+BUILDING_TILE_ADDRESS], 0
-jne step_ground_done
-mov al, byte [ecx+BASE_HEIGHT_ADDRESS]
-cmp al, byte [ecx+LIVE_HEIGHT_ADDRESS]
-jae step_ground_done
-mov byte [ecx+LIVE_HEIGHT_ADDRESS], al
-step_ground_done:
 test dword [STEP_FLAGS_ADDRESS], 1
 jnz step_next
 mov eax, [SPREAD_DAMAGE_ADDRESS]
@@ -2361,14 +2405,14 @@ mov ebx, 1
 step_next:
 add dword [STEP_DX_ADDRESS], 1
 mov eax, [STEP_DX_ADDRESS]
-cmp eax, [RADIUS_ADDRESS]
+cmp eax, [STEP_RADIUS_ADDRESS]
 jle step_out
-mov eax, [RADIUS_ADDRESS]
+mov eax, [STEP_RADIUS_ADDRESS]
 neg eax
 mov [STEP_DX_ADDRESS], eax
 add dword [STEP_DY_ADDRESS], 1
 mov eax, [STEP_DY_ADDRESS]
-cmp eax, [RADIUS_ADDRESS]
+cmp eax, [STEP_RADIUS_ADDRESS]
 jle step_out
 step_finished:
 mov dword [STEP_ACTIVE_ADDRESS], 0
@@ -2388,6 +2432,10 @@ ret
 -- was found, and that includes **ECX**: this is a thiscall, the prologue's `mov esi, ecx`
 -- five instructions later is where `this` comes from, and the whole function writes through
 -- it. Hence the pushad - the drain calls the game's own damage, which clobbers freely.
+-- SPEED bounds both new tunnel tiles and expensive damage calls per tick. Unlike a CPU
+-- time budget this produces the same work on every machine, including when replaying.
+-- A partial tile stays in STEP_* for the next tick; empty cells retain the tile bound.
+-- It keeps the radius it began with, so a changed setting applies from the next tile.
 local queue_tick = [[
 pushad
 cmp dword [DIAGNOSTICS_ADDRESS], 0
@@ -2442,13 +2490,11 @@ mov [SW_DAMAGE_MAX_ADDRESS], eax
 mov [SW_DAMAGE_CALLS_ADDRESS], eax
 mov [SW_TILES_ADDRESS], eax
 tick_unwatched:
-rdtsc
-shrd eax, edx, 10
-mov [DRAIN_START_ADDRESS], eax
 mov eax, [SPEED_ADDRESS]
 test eax, eax
 jle tick_done
 mov [TICK_LEFT_ADDRESS], eax
+mov [DAMAGE_LEFT_ADDRESS], eax
 tick_next:
 cmp dword [STEP_ACTIVE_ADDRESS], 0
 jne tick_step
@@ -2469,6 +2515,7 @@ mov [STEP_Y_ADDRESS], eax
 mov eax, [ecx+12]
 mov [STEP_FLAGS_ADDRESS], eax
 mov eax, [RADIUS_ADDRESS]
+mov [STEP_RADIUS_ADDRESS], eax
 neg eax
 mov [STEP_DX_ADDRESS], eax
 mov [STEP_DY_ADDRESS], eax
@@ -2510,11 +2557,8 @@ call UPDATE_WALK_ADDRESS
 tick_budget:
 test edi, edi
 je tick_next
-rdtsc
-shrd eax, edx, 10
-sub eax, [DRAIN_START_ADDRESS]
-cmp eax, DRAIN_BUDGET
-jb tick_next
+sub dword [DAMAGE_LEFT_ADDRESS], 1
+jnz tick_next
 tick_done:
 cmp dword [DIAGNOSTICS_ADDRESS], 0
 je tick_out
@@ -2673,11 +2717,13 @@ jmp RETURN_ADDRESS
 -- each of its points. It is not set while the tunneler walks to a tunnel it has been told
 -- to dig, or while it is underground, so a stance never cancels a dig order either.
 --
+-- With "skip digging tunnelers" off, digging tunnelers are left to the game. One that
+-- this switch hid before - in a save loaded with it now off - is made selectable again
+-- once it is no longer digging, exactly as the switch itself would have done.
+--
 -- Runs before the function's own prologue, so ECX must survive; only EAX and EDX are used.
 local stance = [[
 push ecx
-cmp dword [HIDE_ENABLED_ADDRESS], 0
-je hide_done
 mov eax, [CURRENT_UNIT_ADDRESS]
 imul eax, eax, 1168
 movzx edx, word [eax+UNIT_STATE]
@@ -2689,9 +2735,16 @@ cmp dx, 8
 je hide_it
 cmp dx, 9
 je hide_it
+cmp dword [HIDE_ENABLED_ADDRESS], 0
+jne hide_shown
+cmp word [eax+UNIT_SELECTABLE], 0
+jne hide_done
+hide_shown:
 mov word [eax+UNIT_SELECTABLE], 1
 jmp hide_done
 hide_it:
+cmp dword [HIDE_ENABLED_ADDRESS], 0
+je hide_done
 mov word [eax+UNIT_SELECTABLE], 0
 hide_done:
 cmp dword [ENABLED_ADDRESS], 0
@@ -2803,6 +2856,8 @@ return {
   tunnel_accept = tunnel_accept,
   damage_family = damage_family,
   collapse_target = collapse_target,
+  restore_tunnel_height = restore_tunnel_height,
+  restore_tunnel_path_tile = restore_tunnel_path_tile,
   queue_fill = queue_fill,
   queue_step = queue_step,
   queue_tick = queue_tick,
