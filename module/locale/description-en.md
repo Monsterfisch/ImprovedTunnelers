@@ -42,9 +42,11 @@ down is the point.
 it comes up under its new target it collapses exactly the way it would have at the first one -
 the same damage, and the whole tunnel behind it, back to its entrance, comes down with it.
 Laying out the route costs one search, once per siege. Following it costs no search at all:
-the stretch of route ahead is handed straight to the game's own path tracer. Tunnels arriving
-together are still sent on one a tick, and a tunnel that needs more than one search to find
-its next target waits where it stands and runs them on successive ticks - never two in one.
+the stretch of route ahead is handed straight to the game's own path tracer. The module runs
+at most one search of its own a tick, for all tunnels together: tunnels being sent on and
+tunnels just dug in that are looking for their first target take turns, and one that would
+need a second search on the same tick waits a tick where it stands - so a whole wave of
+tunnels arriving or digging in at once is spread out instead of landing on one frame.
 A path the game refuses to lay for a tunnel sent on no longer makes the game rebuild its path
 maps for the whole map, which was the worst of the lag.
 

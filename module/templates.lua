@@ -315,6 +315,13 @@ jmp SPREAD_ADDRESS
 -- One run of the search: for AIM_OWNER against AIM_SIEGE, from AIM_FROM, no further than
 -- AIM_RANGE, through the filter in AIM_MODE - which it puts back to 0 before it returns,
 -- whatever happened. EAX comes back as the tile found, 0 for nothing. EAX, ECX and EDX.
+--
+-- Every search the module runs comes through here, and each one stamps the tick into
+-- SEARCH_TICK. That stamp is the module's budget: one search of its own a tick, for all
+-- tunnels together. A tunnel that would need another this tick - being sent on, or being
+-- given its first target - waits where it is and carries on next tick, so a crowd of
+-- tunnels arriving or digging in together is spread over as many ticks instead of all
+-- landing on one.
 local line_search = [[
 push dword [AIM_FROM_Y_ADDRESS]
 push dword [AIM_FROM_X_ADDRESS]
@@ -324,6 +331,8 @@ push dword [AIM_OWNER_ADDRESS]
 mov ecx, PATH_STATE_ADDRESS
 call SEARCH_ADDRESS
 mov dword [AIM_MODE_ADDRESS], 0
+mov eax, [TICKS_ADDRESS]
+mov [SEARCH_TICK_ADDRESS], eax
 mov eax, [ALG_RESULT_ADDRESS]
 ret
 ]]
@@ -490,6 +499,9 @@ ret
 -- its path}, then ROUTE_ENTRIES fortifications of 16 bytes {tile, x, y, where on the path,
 -- the tick a tunnel was sent at it}, then the path itself, a tile to a dword, breach first. One route to every line, found by
 -- the line's own index. In: EBX the line, AIM_UNIT and AIM_OWNER set. EAX, ECX and EDX.
+--
+-- Laying out the route is a search, so when SEARCHED says one has already run it is left
+-- for later: EDX comes back -1, and the caller waits a tick.
 local line_front = [[
 push esi
 mov edx, [ebx]
@@ -504,6 +516,8 @@ add esi, ROUTES_ADDRESS
 mov [ROUTE_CURRENT_ADDRESS], esi
 cmp dword [esi], 0
 jne front_look
+cmp dword [SEARCHED_ADDRESS], 0
+jne front_busy
 call ROUTE_BUILD_ADDRESS
 front_look:
 cmp dword [esi], 1
@@ -531,6 +545,11 @@ pop esi
 ret
 front_none:
 xor edx, edx
+pop esi
+ret
+front_busy:
+mov dword [ROUTE_CURRENT_ADDRESS], 0
+mov edx, -1
 pop esi
 ret
 ]]
@@ -950,9 +969,40 @@ ret
 -- wrap to something enormous. OURS records that the answer is a line rather than the
 -- game's own, for the net below. EAX goes back as findTunnelTarget's own answer; EBX, ESI
 -- and EDI are kept.
+--
+-- At most one search of its own a call, and none at all on a tick some other tunnel has
+-- already had its search (SEARCH_TICK): then the game's search is not even asked, and the
+-- tunnel simply stays at its entrance a tick longer, which the game reads as "nothing found
+-- yet". When a second search would be needed - laying out a line's route and then aiming
+-- at its front, or a second line to try - the game's answer is handed back: the entrance's
+-- search counter is put back to what it was, so the game asks the same question again
+-- next tick, and the line reached is kept in the tunnel's record as ticks * 4 + line, so
+-- the lines already tried are not tried again. Laying the game's own answer again for the
+-- trace (place_restore) is the one exception, since without it no path could be laid.
+--
+-- The game has pushed findTunnelTarget's two arguments before the call this replaces, and
+-- findTunnelTarget takes them off again (ret 8); when it is not called at all they are
+-- taken off here instead.
 local place_aim = [[
 mov dword [OURS_ADDRESS], 0
 mov dword [QUIET_ADDRESS], 0
+cmp dword [RETARGET_ENABLED_ADDRESS], 0
+je place_call
+mov eax, [TICKS_ADDRESS]
+cmp eax, [SEARCH_TICK_ADDRESS]
+jne place_save
+add esp, 8
+xor eax, eax
+jmp RETURN_ADDRESS
+place_save:
+mov ecx, [CURRENT_UNIT_ADDRESS]
+imul ecx, ecx, 1168
+movsx ecx, word [ecx+UNIT_WORKPLACE]
+imul ecx, ecx, BUILDING_STRIDE
+mov [SAVED_ENTRANCE_ADDRESS], ecx
+mov eax, [ecx+COUNTER_ADDRESS]
+mov [SAVED_COUNTER_ADDRESS], eax
+place_call:
 call FIND_TARGET_ADDRESS
 test eax, eax
 je place_done
@@ -987,10 +1037,26 @@ mov ecx, [RECORD_ADDRESS]
 mov dword [ecx+4], 0
 mov dword [ecx+8], 0
 mov dword [SEARCHED_ADDRESS], 0
+mov edx, [ecx+12]
+mov dword [ecx+12], 0
+mov eax, edx
+and eax, -4
+neg eax
+mov esi, [TICKS_ADDRESS]
+lea eax, [eax+esi*4]
+xor esi, esi
+cmp eax, STEP_WINDOW
+jae place_from
+mov esi, edx
+and esi, 3
+place_from:
 mov ebx, [AIM_OWNER_ADDRESS]
 shl ebx, 6
 add ebx, LINE_ADDRESS
 mov edi, 4
+sub edi, esi
+shl esi, 4
+add ebx, esi
 place_try:
 mov edx, [ebx]
 test edx, edx
@@ -1003,10 +1069,14 @@ mov dword [ebx], 0
 jmp place_next
 place_current:
 call LINE_FRONT_ADDRESS
+cmp edx, -1
+je place_later
 test edx, edx
 je place_next
 cmp edx, [GAME_TILE_ADDRESS]
 je place_is_line
+cmp dword [SEARCHED_ADDRESS], 0
+jne place_later
 call AIM_AT_LINE_ADDRESS
 test eax, eax
 jne place_joined
@@ -1055,6 +1125,23 @@ pop ebx
 place_found:
 mov eax, 1
 place_done:
+jmp RETURN_ADDRESS
+place_later:
+mov ecx, [SAVED_ENTRANCE_ADDRESS]
+mov eax, [SAVED_COUNTER_ADDRESS]
+mov [ecx+COUNTER_ADDRESS], eax
+mov eax, ebx
+sub eax, LINE_ADDRESS
+shr eax, 4
+and eax, 3
+mov ecx, [TICKS_ADDRESS]
+lea eax, [ecx*4+eax]
+mov ecx, [RECORD_ADDRESS]
+mov [ecx+12], eax
+pop edi
+pop esi
+pop ebx
+xor eax, eax
 jmp RETURN_ADDRESS
 place_restore:
 cmp dword [SEARCHED_ADDRESS], 0
@@ -1443,7 +1530,9 @@ jmp RETURN_ADDRESS
 -- it stands (EAX 2, REDIRECT_HOW 9) and the step it has reached is kept in its record as
 -- ticks * 4 + step - 0 from the top, 1 the cone, 2 widening - so the next tick carries on
 -- there instead of repeating what already failed. A step older than STEP_WINDOW ticks is
--- forgotten and the tunnel starts from the top.
+-- forgotten and the tunnel starts from the top. A tick on which another tunnel has already
+-- had its search (SEARCH_TICK) counts as one already spent here too, whether that tunnel was
+-- being sent on or given its first target.
 --
 -- REDIRECT_HOW says which way it went (7 along its line's route, 1 its line by a search, 2
 -- the cone, 3 widening), or why not (4 used up, 5 nothing in reach, 6 the path would not
@@ -1474,7 +1563,11 @@ mov [AIM_FROM_X_ADDRESS], ecx
 movsx ecx, word [esi+UNIT_Y]
 mov [AIM_FROM_Y_ADDRESS], ecx
 mov edi, [esi+UNIT_TILE]
-mov dword [SEARCHED_ADDRESS], 0
+xor eax, eax
+mov ecx, [TICKS_ADDRESS]
+cmp ecx, [SEARCH_TICK_ADDRESS]
+sete al
+mov [SEARCHED_ADDRESS], eax
 mov ecx, [RECORD_ADDRESS]
 mov eax, [TICKS_ADDRESS]
 shl eax, 2
@@ -1500,6 +1593,11 @@ mov dword [ecx+8], 0
 jmp redirect_cone
 redirect_line_current:
 call LINE_FRONT_ADDRESS
+cmp edx, -1
+jne redirect_front_known
+xor edx, edx
+jmp redirect_later
+redirect_front_known:
 test edx, edx
 jne redirect_front
 mov eax, [ROUTE_CURRENT_ADDRESS]
@@ -1641,6 +1739,12 @@ ret
 --
 -- Steps are four bits each, two to a byte, the even step in the low half - the way the
 -- game's own mover reads them. EAX 1 on success. EBX, ESI and EDI are kept.
+--
+-- For the length of the trace the tunneller counts as selectable again. A path the game
+-- refuses ends in despawnUnreachableUnit, which passes over a selectable unit but takes a
+-- hidden one standing on a wall bit - a tunneller that came up under a stockpile - for one
+-- stuck inside a wall: it floods the whole map looking for somewhere to put it, and then
+-- fades it out of the game. Neither is wanted for a tunnel that is only being refused a leg.
 local extend_plan = [[
 push ebx
 push esi
@@ -1665,6 +1769,9 @@ mov [edx+PLAN_BUFFER_ADDRESS], al
 add edx, 1
 jmp extend_save
 extend_saved:
+movzx eax, word [esi+UNIT_SELECTABLE]
+push eax
+mov word [esi+UNIT_SELECTABLE], 1
 push 2
 push dword [ALG_TARGET_Y_ADDRESS]
 push dword [ALG_TARGET_X_ADDRESS]
@@ -1673,6 +1780,8 @@ mov ecx, UNITS_STATE_ADDRESS
 mov dword [QUIET_ADDRESS], 1
 call SET_DESTINATION_ADDRESS
 mov dword [QUIET_ADDRESS], 0
+pop ecx
+mov [esi+UNIT_SELECTABLE], cx
 test eax, eax
 je extend_put_back
 movzx ebx, word [esi+UNIT_PATH_LENGTH]

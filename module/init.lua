@@ -207,6 +207,7 @@ local FIND_PATH_STATE_OPERAND = 0xB5
 local FIND_SEARCH_CALL = 0xB9
 local FIND_RESULT_OPERAND = 0xC0
 local FIND_GUARDS = {
+  [0x0B] = { 0x8B, 0x86 },                    -- mov eax, [esi + the entrance's search counter]
   [FIND_PATH_STATE_OPERAND - 1] = { 0xB9 },
   [FIND_SEARCH_CALL] = { 0xE8 },
   [FIND_RESULT_OPERAND - 2] = { 0x83, 0x3D },
@@ -471,6 +472,8 @@ ROUTE.guards = {
   [0x1FC] = { 0x3B, 0x56, 0x04 },                  -- cmp edx, [esi+4]: the search's number
 }
 ROUTE.buildingOwner = 0xD6                    -- who a building belongs to
+ROUTE.findCounterOperand = 0x0D               -- in findTunnelTarget: the entrance's search
+                                              -- counter, the attempt it is on
 
 -- How close two collapses have to be to count as the same breach, so the second one adds
 -- its time to the first zone instead of taking a second one.
@@ -621,6 +624,9 @@ C.SW_DAMAGE_CALLS = 0x1F8         -- ... how many calls of it
 C.SW_DAMAGE_KIND = 0x1FC          -- ... what the dearest hit: a building type, -1 a wall
 C.STEP_ACTIVE = 0x200             -- a tunnel tile is part way through falling in
 C.DRAIN_START = 0x204             -- when this tick's collapse work began (cycles / 1024)
+C.SEARCH_TICK = 0x208             -- the tick the module last ran a search of its own
+C.SAVED_ENTRANCE = 0x20C          -- the entrance whose search counter was put aside (scaled)
+C.SAVED_COUNTER = 0x210           -- ... and what that counter was before the game's search
 C.FILL_UNIT = 0x22C               -- the tunnel being written into the queue
 C.FILL_FLAGS = 0x230
 C.FILL_TILE = 0x234
@@ -903,6 +909,7 @@ return {
     writeInteger(control + C.RETARGET_ENABLED, retargetOn and 1 or 0)
     writeInteger(control + C.RETARGET_RANGE, retargetRange)
     writeInteger(control + C.RETARGET_MAX, retargetMax)
+    writeInteger(control + C.SEARCH_TICK, -1)
     writeInteger(control + C.UI_ENABLED, uiOn and 1 or 0)
     writeInteger(control + C.STANCE_ENABLED, stancesOn and 1 or 0)
     writeInteger(control + C.RAIDS_ENABLED, raidsOn and 1 or 0)
@@ -1248,6 +1255,8 @@ return {
         PATH_STATE_ADDRESS = readAddress(finder + FIND_PATH_STATE_OPERAND),
         SEARCH_ADDRESS = search,
         ALG_RESULT_ADDRESS = algResult,
+        TICKS_ADDRESS = ticks,
+        SEARCH_TICK_ADDRESS = control + C.SEARCH_TICK,
       })
       local stands = core.allocateAssembly(templates.stands, {
         STOCKPILE = ROUTE.stockpileFlag,
@@ -1416,6 +1425,7 @@ return {
         ROUTES_ADDRESS = control + C.ROUTES,
         ROUTE_CURRENT_ADDRESS = control + C.ROUTE_CURRENT,
         ROUTE_BUILD_ADDRESS = routeBuild,
+        SEARCHED_ADDRESS = control + C.SEARCHED,
       })
       local aimAtLine = core.allocateAssembly(templates.aim_at_line, {
         AIM_FROM_X_ADDRESS = control + C.AIM_FROM_X,
@@ -1441,6 +1451,7 @@ return {
         UNIT_LADDER_Y = unitField(UNIT_LADDER_Y),
         UNIT_PREVIOUS_TILE = unitField(UNIT_PREVIOUS_TILE),
         UNIT_MOVE_STATUS = unitField(UNIT_MOVE_STATUS),
+        UNIT_SELECTABLE = unitField(UNIT_SELECTABLE),
         SAVE_LADDER_X_ADDRESS = control + C.SAVE_LADDER_X,
         SAVE_LADDER_Y_ADDRESS = control + C.SAVE_LADDER_Y,
         SAVE_PREVIOUS_ADDRESS = control + C.SAVE_PREVIOUS,
@@ -1472,6 +1483,7 @@ return {
 
       local redirect = core.allocateAssembly(templates.redirect, {
         SEARCHED_ADDRESS = control + C.SEARCHED,
+        SEARCH_TICK_ADDRESS = control + C.SEARCH_TICK,
         STEP_WINDOW = ROUTE.stepSeconds * TICKS_PER_SECOND * 4,
         EXTEND_FULL_ADDRESS = control + C.EXTEND_FULL,
         REFUSED_CURSOR_ADDRESS = control + C.REFUSED_CURSOR,
@@ -1575,6 +1587,11 @@ return {
         QUIET_ADDRESS = control + C.QUIET,
         FIND_TARGET_ADDRESS = finder,
         RETARGET_ENABLED_ADDRESS = control + C.RETARGET_ENABLED,
+        SEARCH_TICK_ADDRESS = control + C.SEARCH_TICK,
+        SAVED_ENTRANCE_ADDRESS = control + C.SAVED_ENTRANCE,
+        SAVED_COUNTER_ADDRESS = control + C.SAVED_COUNTER,
+        COUNTER_ADDRESS = readAddress(finder + ROUTE.findCounterOperand),
+        STEP_WINDOW = ROUTE.stepSeconds * TICKS_PER_SECOND * 4,
         ALG_RESULT_ADDRESS = algResult,
         ALG_TARGET_X_ADDRESS = algX,
         ALG_TARGET_Y_ADDRESS = algY,

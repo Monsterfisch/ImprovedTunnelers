@@ -267,6 +267,38 @@ def a_group_spreads_along_a_thick_wall_instead_of_piling_onto_one_tile():
 
 
 @scenario
+def a_wave_of_tunnels_digging_in_together_takes_one_search_of_ours_a_tick():
+    # The line's wall is down and nobody has laid out its route yet when four tunnels finish
+    # digging in on the same tick. Each needs searches of the module's own - the route, then
+    # the line's front - and run together they used to land on that one tick. Now the module
+    # runs one search a tick: the others wait at their entrances, and all four still go for
+    # the front of the route.
+    c = Castle(walls=[(108, 100), (118, 100), (128, 100)], camp=(150, 100))
+    first = c.tunneller(10, (100, 100))
+    c.dig_in(first)
+    c.take_down(108, 100)
+    units = [c.tunneller(11 + i, (98, 92 + 5 * i)) for i in range(4)]
+    seen = c.watch_searches()
+    ours = []
+    for _ in range(20):
+        before = len(seen)
+        c.tick_now += 1
+        c.h.put32(c.f.ticks, c.tick_now)
+        for u in units:
+            if c.state(u) == 9 and c.u16(u, 0xF6) != 1:
+                c.h.put32(c.f.current_unit, u)
+                c.call(c.f.tunneler)
+        ours.append(sum(1 for m in seen[before:] if m[0] != 0))   # filtered: route, pin
+        if all(c.u16(u, 0xF6) == 1 for u in units):
+            break
+    check('all four are aimed', [c.u16(u, 0xF6) for u in units], [1] * 4)
+    check('  at the front of the route', [c.heading(u) for u in units], [(118, 100)] * 4)
+    check('  with never more than one search of ours on a tick', max(ours), 1)
+    check('  and the route laid out once', [m[0] for m in seen].count(3), 1)
+    check('nothing is written below the image base', len(c.strays), 0)
+
+
+@scenario
 def a_path_of_ours_that_will_not_lay_costs_no_whole_map_rebuild():
     # A trace that finds no way back makes the game rebuild the path linkage of every
     # building and the area map of the whole map - the lag spike. For a path the module

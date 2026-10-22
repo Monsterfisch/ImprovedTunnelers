@@ -113,6 +113,7 @@ class Fixture:
         self.lines = self.records + 64 * 16          # four lines a player, {tile, x, y, tick}
         self.plan_buffer = self.lines + 9 * 64
         self.aim_mode = self.control + 0xE4
+        self.search_tick = self.control + 0x208      # the tick the module last searched
         self.aim_pin = self.control + 0xE8
         self.aim_from_x = self.control + 0xEC
         self.aim_from_y = self.control + 0xF0
@@ -377,11 +378,13 @@ def scenario(extreme):
 
     trace_ok = [True]
     new_leg = [4, 3]                     # how many steps the game's trace lays, and which way
+    selectable_at_trace = []             # what the unit's isSelectable was while it was traced
 
     def trace(cpu):
         args = [cpu.m.u32(cpu.r['esp'] + 4 + 4 * i) for i in range(4)]
         traces.append(tuple(args))
         u = f.unit(args[0])
+        selectable_at_trace.append(struct.unpack('<H', h.m.read(u + 0x2A4, 2))[0])
         if trace_ok[0]:                  # what the game's own trace leaves behind
             steps, way = new_leg
             for i in range(0, steps, 2):
@@ -486,24 +489,36 @@ def scenario(extreme):
     h.put16(f.building_base + ENTRANCE * 0x32C + 0x262, 100)
     game_says = [0]
 
+    counter = f.building_base + ENTRANCE * 0x32C + 0x25C       # the entrance's search counter
+    game_asked = []
+
     def game_first(cpu):
         tile = game_says[0]
+        game_asked.append(tile)
         h.put32(f.alg_result, tile)
         h.put32(f.alg_x, xy(tile)[0])
         h.put32(f.alg_y, xy(tile)[1])
+        if tile:
+            h.put32(counter, 0xFFFFFFFF)                    # the game is done searching
         cpu.r['eax'] = 1 if tile else 0
         cpu.eip = cpu.pop()
         cpu.r['esp'] += 8
     h.cpu.hooks[f.finder] = game_first
 
-    def aim(u, uid, game_tile):
+    def aim(u, uid, game_tile, fresh=True, setup=True):
         game_says[0] = game_tile
-        f.set_unit(u, owner=1, siege=2, x=100, y=100, uid=uid, kind=5, alive=2, state=9)
-        h.put16(f.unit(u) + 0x338, ENTRANCE)
+        if setup:
+            f.set_unit(u, owner=1, siege=2, x=100, y=100, uid=uid, kind=5, alive=2, state=9)
+            h.put16(f.unit(u) + 0x338, ENTRANCE)
+        if fresh:                                           # a tick nobody has searched on yet
+            h.put32(f.search_tick, 0xFFFFFFFF)
         h.put32(f.current_unit, u)
         asked.clear()
+        game_asked.clear()
         cpu = h.run(first, until=first_on, regs={'ebx': 0, 'esi': 0x51, 'edi': 0x52})
-        kept = (cpu.r['ebx'], cpu.r['esi'], cpu.r['edi']) == (0, 0x51, 0x52)
+        # findTunnelTarget's two arguments are off the stack whether it was called or not
+        kept = (cpu.r['ebx'], cpu.r['esi'], cpu.r['edi'], cpu.r['esp']) == (
+            0, 0x51, 0x52, STACK_TOP + 4)
         return cpu.r['eax'], h.u32(f.alg_result), kept
 
     A, B, FAR = 100 * 400 + 110, 108 * 400 + 104, 300 * 400 + 300
@@ -592,6 +607,40 @@ def scenario(extreme):
     check('while the game is still looking, it is left to look', got[0], 0)
     check('the filter is never left on for the game', h.u32(f.aim_mode), 0)
 
+    # one search of the module's own a tick, for every tunnel together
+    clear_lines()
+    set_line(1, 0, A)
+    reach.add(A)
+    h.put32(counter, 2)
+    h.put32(f.search_tick, h.u32(f.ticks))                  # another tunnel searched this tick
+    got = aim(23, 3013, B, fresh=False)
+    check('on a tick another tunnel has searched, a new tunnel waits at its entrance',
+          (got[0], asked, got[2]), (0, [], True))
+    check('  without even asking the game', game_asked, [])
+    check('  its entrance s search left where it was', h.u32(counter), 2)
+    got = aim(23, 3013, B, setup=False)
+    check('  and the next tick it is aimed as before', (got[:2], asked),
+          ((1, A), [(1, A, 10 + 24, 100, 100)]))
+
+    clear_lines()
+    FAR2 = 100 * 400 + 125                                  # in range, but not reachable
+    set_line(1, 0, FAR2)
+    set_line(1, 1, A)
+    stand(FAR2)
+    reach.discard(FAR2)
+    h.put32(counter, 2)
+    got = aim(24, 3014, B)
+    check('a tunnel that would need a second search of ours waits a tick',
+          (got[0], asked, got[2]), (0, [(1, FAR2, 25 + 24, 100, 100)], True))
+    check('  handing the game s answer back: its entrance asks again next tick',
+          h.u32(counter), 2)
+    check('  remembering which line it had got to',
+          h.u32(record_of(24) + 12), h.u32(f.ticks) * 4 + 1)
+    got = aim(24, 3014, B, setup=False)
+    check('  and the next tick carries on there, with one search', (got[:2], asked),
+          ((1, A), [(1, A, 10 + 24, 100, 100)]))
+    check('  joining that line', h.u32(record_of(24) + 8), f.lines + 64 + 16)
+
     # --------------------------------------------------------------- the net
     print(' where a tunnel goes: the net under the first aim')
     net = f.tunneler + 0x6D3
@@ -654,9 +703,11 @@ def scenario(extreme):
         h.put16(base + 0xCE, 100)
         h.put32(base + 0xDC, 100 * 400 + 102)
 
-    def send_on(u):
+    def send_on(u, fresh=True):
         asked.clear()
         traces.clear()
+        if fresh:                                           # a tick nobody has searched on yet
+            h.put32(f.search_tick, 0xFFFFFFFF)
         h.put32(f.current_unit, u)
         cpu = h.run(redirect, regs={'ebx': 0x61, 'esi': 0x62, 'edi': 0x63})
         kept = (cpu.r['ebx'], cpu.r['esi'], cpu.r['edi']) == (0x61, 0x62, 0x63)
@@ -693,6 +744,24 @@ def scenario(extreme):
     check('  and the path is traced there', traces, [(unit, 110, 100, 2)])
     check('  and it is counted', h.u32(rec + 4), 1)
     check('  and the line, still standing, stays put', line(1, 0)[0], A)
+
+    clear_lines()
+    set_line(1, 0, A)
+    dug(unit, 4100)
+    rec = give(unit, 0)
+    h.put16(f.unit(unit) + 0x2A4, 0)                        # hidden while it digs
+    h.put32(f.search_tick, h.u32(f.ticks))                  # another tunnel searched this tick
+    got = send_on(unit, fresh=False)
+    check('on a tick another tunnel has searched, a tunnel to be sent on waits',
+          (got, asked, traces), ((2, 9, True), [], []))
+    selectable_at_trace.clear()
+    got = send_on(unit)
+    check('  and the next tick it is sent at its line', (got, asked),
+          ((1, 1, True), [(1, A, 20 + 24, 130, 100)]))
+    check('  traced as a selectable unit, so a refusal sends no map-wide rescue after it',
+          selectable_at_trace, [1])
+    check('  and hidden again afterwards',
+          struct.unpack('<H', h.m.read(f.unit(unit) + 0x2A4, 2))[0], 0)
 
     clear_lines()
     set_line(1, 0, HERE)                                    # its line was where it now stands
