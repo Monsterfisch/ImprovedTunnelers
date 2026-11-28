@@ -1,62 +1,50 @@
-denial_group: Construction après une brèche
-denial_enabled: Délai de construction et de réparation (ticks)
-denial_enabled_tooltip: 'Bloquer brièvement la construction et la réparation des murs près d’une brèche. Par défaut : 100
-  ticks (2,5 secondes à vitesse normale). Maximum : 2400 ticks. D’autres effondrements prolongent le délai. Désactiver permet
-  de reconstruire immédiatement.'
-denial_message: Expliquer le blocage
-denial_message_tooltip: Afficher un message quand une brèche empêche de construire.
-terrain_group: Terrain des tunnels
+denial_group: Construction sur les brèches
+denial_enabled: Retarder la reconstruction sur une brèche de tunnel
+denial_enabled_tooltip: Définit combien de temps la construction reste bloquée sur une brèche.
+denial_message: Expliquer pourquoi la construction est bloquée
+denial_message_tooltip: Affiche un message lorsque vous tentez de construire dans une brèche active.
 terrain_enabled: Restaurer le sol après le creusement
-terrain_enabled_tooltip: Rétablir la hauteur initiale autour des tunnels terminés. Activé par défaut. Désactiver utilise le
-  nettoyage du jeu d’origine.
-retarget_group: Parcours des tunnels
-retarget_enabled: Continuer après une brèche
-retarget_enabled_tooltip: Coordonner les tunnels et chercher une autre cible si la précédente a disparu.
-retarget_range: Portée de recherche (cases)
-retarget_range_tooltip: 'Distance de recherche de la prochaine cible. Par défaut : 80.'
-retarget_max: Nombre maximal de nouvelles cibles
-retarget_max_tooltip: 'Nombre de fois qu’un tunnel peut poursuivre vers une autre cible. Par défaut : 10.'
+terrain_enabled_tooltip: Restaure le sol surélevé lorsque le tunnel s’effondre.
+retarget_enabled: Poursuivre après une brèche
+retarget_enabled_tooltip: Les tunneliers cherchent une nouvelle cible après avoir ouvert une brèche ou perdu leur cible initiale.
 targets_group: Cibles des tunnels
 targets_enabled: Viser les tours et les portes
-targets_enabled_tooltip: Autoriser toutes les tours et portes comme cibles.
-ui_group: Commandes et dégâts des tunnels
-targets_under: Creuser sous les bâtiments civils
-targets_under_tooltip: Autoriser les passages sous les bâtiments ordinaires. Les donjons restent exclus.
-digging_unselectable: Ignorer les tunneliers en train de creuser
-digging_unselectable_tooltip: Éviter d’interrompre le creusement lors des sélections et ordres de groupe.
-digging_untargetable: Protéger les tunneliers sous terre
-digging_untargetable_tooltip: Empêcher les ennemis de viser les tunneliers pendant le creusement.
+targets_enabled_tooltip: Les tunneliers peuvent creuser vers les tours et les corps de garde.
+ui_group: Tunneliers sous terre
+targets_under: Creuser sous les bâtiments urbains
+targets_under_tooltip: Les tunnels peuvent passer sous les bâtiments ordinaires de la ville.
+digging_unselectable: Exclure des sélections les tunneliers qui creusent
+digging_unselectable_tooltip: Les sélections ignorent les tunneliers tant qu’ils sont sous terre.
+digging_untargetable: Protéger des attaques les tunneliers sous terre
+digging_untargetable_tooltip: Les ennemis ne peuvent pas cibler les tunneliers sous terre.
+collapse_enabled: Endommager la cible lors de l’effondrement d’un tunnel
+collapse_enabled_tooltip: Un effondrement endommage la structure au-dessus de sa case cible.
 collapse_damage: Dégâts à la cible
-collapse_damage_tooltip: 'Dégâts au mur, à la tour ou à la porte au bout du tunnel. Par défaut : 2500.'
 collapse_spread: Endommager les bâtiments proches
-collapse_spread_tooltip: Toucher les bâtiments ordinaires voisins. Les fortifications voisines sont exclues.
-collapse_speed: 'Vitesse d’effondrement (cases par seconde)'
-collapse_speed_tooltip: 'Vitesse à laquelle un tunnel s’effondre après l’impact, en cases par seconde à vitesse de jeu normale : le sol est rétabli et les alentours secoués case par case, de la cible vers l’entrée. Une valeur basse est plus lente et étale le travail dans le temps. Par défaut : 80.'
-collapse_spread_radius: Rayon des dégâts (cases)
-collapse_spread_radius_tooltip: 'Portée des dégâts autour du tunnel. Par défaut : 2.'
-collapse_spread_damage: Dégâts aux bâtiments proches
-collapse_spread_damage_tooltip: 'Dégâts à chaque bâtiment ordinaire à portée. Par défaut : 60.'
-ui_enabled: Ajouter le bouton « Attaquer ici »
-ui_enabled_tooltip: Conserver le bouton de creusement et ajouter une commande d’attaque des bâtiments.
-stances_group: Postures des tunneliers
-stances_enabled: Activer les postures défensive et agressive
-stances_enabled_tooltip: Les tunneliers inactifs réagissent aux ennemis proches sans interrompre le creusement ou les déplacements.
-raids_group: Tunneliers dans les raids de l’IA
-raids_enabled: Activer les tunneliers de raid
-raids_enabled_tooltip: Les tunneliers choisis dans les réglages de raid de l’IA rejoignent ses troupes de raid.
-diagnostics_group: Diagnostic
-diagnostics_enabled: Écrire les messages de diagnostic
-diagnostics_enabled_tooltip: Consigner l’activité des tunnels pour rechercher les problèmes. Désactivé par défaut.
-balance_changes: Balance Changes
-bugfixes: Bugfixes
-ai: AI
-improvements: Improvements
-misc: Miscellaneous
-retarget_join: 'Distance de regroupement (cases)'
-retarget_join_tooltip: 'Les tunnels creusés aussi près du départ du premier tunnel d’un groupe visent tous sa cible et ne bifurquent qu’à partir de là. Les tunnels plus éloignés ouvrent leur propre brèche. 0 = toute distance. Par défaut : 15.'
-digging_trap_proof: 'Les tunneliers ignorent les fosses'
-digging_trap_proof_tooltip: 'Les tunneliers sous terre ne subissent aucun dégât des fosses meurtrières et ne les déclenchent pas.'
-digging_overlay: 'Montrer vos tunnels sous les hauteurs'
-digging_overlay_tooltip: 'Là où votre tunnel passe sous un terrain surélevé, le jeu ne montre aucune bosse en surface. Ces cases sont marquées en rouge, comme un fossé prévu, pendant le creusement, et la marque disparaît quand le tunnel s''effondre. Vous seul voyez vos tunnels.'
-collapse_entrance_lost: 'Entrée détruite : le tunnel s’effondre'
-collapse_entrance_lost_tooltip: 'Si l’entrée est détruite pendant le creusement, le tunnel s’effondre là où il est arrivé et endommage ce qui se trouve au-dessus, comme s’il avait atteint une cible.'
+collapse_spread_tooltip: L’effondrement d’un tunnel peut endommager d’autres bâtiments autour de sa cible.
+ui_enabled: Séparer les ordres « Attaquer ici » et « Creuser un tunnel »
+ui_enabled_tooltip: Sélectionnez un tunnelier, cliquez sur « Attaquer ici » ou le bouton voisin « Creuser un tunnel » dans le panneau d’unité, puis sur la cible.
+stances_enabled: Les tunneliers inactifs obéissent aux postures de combat
+stances_enabled_tooltip: Utilisez les boutons de posture habituels pour régler la réaction des tunneliers inactifs face aux ennemis.
+raids_enabled: Autoriser les tunneliers dans les raids IA
+raids_enabled_tooltip: Les seigneurs IA peuvent envoyer des tunneliers en raid si leur liste de raid les inclut.
+balance_changes: Modifications de l'équilibrage
+bugfixes: Corrections de bugs
+ai: IA
+improvements: Améliorations
+digging_trap_proof: Ignorer les fosses piégées en creusant
+digging_trap_proof_tooltip: Les tunneliers qui creusent ne subissent aucun dégât des fosses piégées.
+digging_overlay: Signaler vos tunnels sous terrain surélevé
+digging_overlay_tooltip: Vos tunnels sous un terrain surélevé apparaissent en rouge.
+collapse_entrance_lost: Effondrer les tunnels si leur entrée est détruite
+collapse_entrance_lost_tooltip: Un tunnel peut s’effondrer lorsque son entrée est détruite.
+tags.behavior: Comportement
+tags.bugfixes: Corrections
+tags.balance: Équilibrage
+tags.interface: Interface
+qol: Qualité de vie
+collapse_group: Effondrements de tunnels
+cat_attacks_raids: Attaques et raids
+cat_siege_digging: Engins de siège et creusement
+cat_siege_sapping: Siège et sape
+cat_unit_controls: Contrôle des unités

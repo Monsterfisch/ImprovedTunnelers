@@ -6,6 +6,21 @@ enemy's camp.
 
 What the module does, in plain English, is in `module/locale/description-en.md`.
 
+## Preset tuning
+
+Set these keys under `improved-tunnelers` in a preset.
+
+| Key | Default | Effect |
+| --- | ---: | --- |
+| `retarget.range` | 80 | Target search range in tiles |
+| `retarget.max` | 10 | Maximum follow-up targets |
+| `retarget.join_distance` | 15 | Distance for joining tunnels in tiles. 0 allows any distance. |
+| `collapse.damage` | 2500 | Damage to the collapse target |
+| `collapse.tiles_per_second` | 80 | Speed along the tunnel |
+| `collapse.spread_radius` | 2 | Nearby damage radius in tiles |
+| `collapse.spread_damage` | 60 | Damage to nearby buildings |
+| `diagnostics.enabled` | false | Log tunneler routing and collapse decisions |
+
 ## What is in here
 
 | Folder | |
@@ -13,6 +28,9 @@ What the module does, in plain English, is in `module/locale/description-en.md`.
 | `module/` | the module itself - this is the source of truth, edited in place |
 | `bench/` | the emulator bench: the module's own Lua runs against the real exe image, its assembly is assembled with UCP's own fasm.dll and then executed |
 | `tools/publish.py` | copies `module/` into the game's module folder under a new version |
+
+Other modules can ask `modules["improved-tunnelers"]:raidRoleFor(unitType)`: 26 (maceman) for a
+tunneller while AI raid tunnellers are on, otherwise nil.
 
 ## Working on it
 
@@ -32,6 +50,15 @@ Every version that was published has a tag, so any build can be brought back wit
 
 ## The bench
 
+Set `UCP_UTILS_LUA` to the framework 3.0.8 source file `content/ucp/code/utils.lua`.
+
 `bench/` is a snapshot of the working copies under `%TEMP%\shcw`; it needs `lupa`,
 `keystone`, the two game exes and UCP's `fasm.dll`, and it still runs from that temp
 directory. The copy here is so the harness and its 500-odd assertions survive a temp wipe.
+
+## Vanilla and Recommended
+
+Every option of the module is off by default, so the module alone plays like the original
+game. Two plugins in this repository form the Improved Tunnelers family in the launcher:
+`improved-tunnelers-recommended` (offered first) switches on the recommended settings, `improved-tunnelers-vanilla`
+keeps everything off. Plugins that build on the module set the options they need themselves.
